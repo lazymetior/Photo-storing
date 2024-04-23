@@ -29,5 +29,6 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-local": "^1.0.0",
     "pg": "^8.11.3"
-  }
+  },
+  "node-sass": "^7.0.1"
 }
