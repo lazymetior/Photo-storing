@@ -1,0 +1,137 @@
+//get data from db
+router.get("/getdata", async (req, res) => {
+  try {
+    const query =
+      "SELECT posts.*, users.username FROM posts JOIN users ON posts.user_id = users.user_id ORDER BY posts.post_id ASC";
+    const result = await conn.query(query, []);
+
+    res.status(200).json({ status: 200, data: result.rows });
+  } catch (error) {
+    console.error(error);
+    res
+      .status(422)
+      .json({ status: 422, error: "Error fetching data from the database" });
+  }
+});
+
+
+
+router.post("/delete", async (req, res) => {
+  const { deleteItemId } = req.body; // Extract deleteItemId from the request body
+  console.log(deleteItemId); // Check if the ID is properly received
+
+  try {
+    const result = await conn.query("SELECT filename FROM posts WHERE post_id = $1", [deleteItemId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ status: 404, error: "Post not found" });
+    }
+
+    const filename = result.rows[0].filename;
+    const filePath = path.join(__dirname, "../uploads", filename);
+
+    fs.unlinkSync(filePath);
+    await conn.query("DELETE FROM posts WHERE post_id = $1", [deleteItemId]); // Use deleteItemId instead of id
+
+    res.status(200).json({ status: 200 });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 500, error: "Internal Server Error" });
+  }
+});
+
+
+
+
+
+// Authentication process
+router.use(bodyParser.json());
+router.use(
+  session({
+    secret: "your-secret-key",
+    resave: false,
+    saveUninitialized: false,
+  })
+);
+router.use(passport.initialize());
+router.use(passport.session());
+
+// Passport Local Strategy
+passport.use(
+  new LocalStrategy({ usernameField: "email" }, (email, password, done) => {
+    conn.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email],
+      (err, result) => {
+        if (err) {
+          return done(err);
+        }
+        if (!result.rows[0]) {
+          return done(null, false, { message: "Incorrect email." });
+        }
+        const user = result.rows[0];
+
+        bcrypt.compare(password, user.password, (bcryptErr, res) => {
+          if (res) {
+            return done(null, user);
+          } else {
+            return done(null, false, { message: "Incorrect password." });
+          }
+        });
+      }
+    );
+  })
+);
+
+// Passport Serialization and Deserialization
+passport.serializeUser((user, done) => {
+  done(null, user.user_id);
+});
+
+passport.deserializeUser((id, done) => {
+  conn.query("SELECT * FROM users WHERE user_id = $1", [id], (err, result) => {
+    done(err, result.rows[0]);
+  });
+});
+
+// Routes
+router.post("/signup", async (req, res) => {
+  const { username, email, password } = req.body;
+
+  try {
+    // Check if user with the same email already exists
+    const userExists = await conn.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email]
+    );
+    if (userExists.rows.length > 0) {
+      return res
+        .status(400)
+        .json({ message: "User with this email already exists." });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const result = await conn.query(
+      "INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING *",
+      [username, email, hashedPassword]
+    );
+    const user = result.rows[0];
+
+    req.login(user, (loginErr) => {
+      if (loginErr) {
+        console.error("Login error:", loginErr);
+        res.status(500).json({ message: "Failed to log in after signup." });
+      } else {
+        res.json(user);
+      }
+    });
+  } catch (err) {
+    console.error("Signup error:", err);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+router.post("/login", passport.authenticate("local"), (req, res) => {
+  // If authentication is successful, send a success response
+  res.json({isAuthenticated: true, message: "Login successful", user: req.user });
+});
